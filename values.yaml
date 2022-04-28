@@ -1,0 +1,315 @@
+---
+replicas: 1
+
+# Allows you to add any config files in /usr/share/logstash/config/
+# such as logstash.yml and log4j2.properties
+#
+# Note that when overriding logstash.yml, `http.host: 0.0.0.0` should always be included
+# to make default probes work.
+logstashConfig:
+  logstash.yml: |
+    http.host: "0.0.0.0"
+    path.config: /usr/share/logstash/pipeline
+
+# Allows you to add any pipeline files in /usr/share/logstash/pipeline/
+### ***warn*** there is a hardcoded logstash.conf in the image, override it first
+logstashPipeline:
+  logstash.conf: |
+    input {
+        tcp {
+            port => 5514
+            type => syslog
+        }
+        udp {
+            port => 5514
+            type => syslog
+        }
+    }
+    filter {
+        grok {
+            match => {
+                "message" => "<%{POSINT:syslog_pri}>%{SYSLOGTIMESTAMP:syslog_timestamp} %{SYSLOGHOST:syslog_hostname} %{DATA:syslog_program}(?:\[%{POSINT:syslog_pid}\])?: %{GREEDYDATA:syslog_message}"
+            }
+            add_field => [ "received_at", "%{@timestamp}" ]
+            add_field => [ "received_from", "%{host}" ]
+        }
+        syslog_pri { }
+        date {
+            match => [ "syslog_timestamp", "MMM d HH:mm:ss", "MMM dd HH:mm:ss" ]
+        }
+        if !("_grokparsefailure" in [tags]) {
+            grok {
+                match => {
+                    "message" => "<%{POSINT:syslog_pri}>%{SYSLOGTIMESTAMP:syslog_timestamp} %{SYSLOGHOST:syslog_hostname} %{DATA:syslog_program}?: %{DATA:apptrack_status}?: %{IP:SRC_IP}/%{DATA:SRC_PORT}->%{IP:DST_IP}/%{WORD:DST_PORT} %{DATA:APP} UNKNOWN %{IP:SRC_NAT_IP}/%{DATA:SRC_NAT_PORT}->%{IP:DST_NAT_IP}/%{DATA:DST_NAT_PORT} %{DATA:RULE} %{DATA:UNKNOWN} %{NUMBER:PROTO_CODE} %{DATA:RULE_POLICY} %{DATA:SRC_ZONE} %{DATA:DST_ZONE} %{NUMBER:BYTES} %{GREEDYDATA:syslog_message}"
+                }
+                add_tag => ["APPTRACK"]
+                remove_field => [ "@message" ]
+            }
+            mutate {
+                replace => [ "@source_host", "%{syslog_hostname}" ]
+                replace => [ "@message", "%{syslog_message}" ]
+            }
+        }
+        mutate {
+            remove_field => [ "syslog_hostname", "syslog_message", "syslog_timestamp" ]
+        }
+        if [@message] =~ /^APPTRACK/ {
+            grok {
+                match => {
+                    "message" => "%{DATA:apptrack_status} %{IP:SRC_IP}/%{DATA:SRC_PORT}->%{IP:DST_IP}/%{WORD:DST_PORT} %{DATA:APP} %{DATA:APP}UNKNOWN UNKNOWN %{IP:SRC_NAT_IP}/%{DATA:SRC_NAT_PORT}->%{IP:DST_NAT_IP}/%{DATA:DST_NAT_PORT} %{DATA:RULE} None %{NUMBER:PROTO_CODE} %{DATA:RULE_POLICY} %{DATA:SRC_ZONE} %{DATA:DST_ZONE} %{NUMBER:BYTES}"
+                }
+                remove_field => [ "@message" ]
+                add_tag => ["APPTRACK"]
+            }
+        }
+        if [@message] =~ /^RT_FLOW_SESSION/ {
+            grok {
+                match => {
+                    "message" => "%{DATA:event}: session created %{IP:src_ip}/%{DATA:src_port}->%{IP:dst_ip}/%{DATA:dst_port} %{DATA:src_nat_rule} %{IP:src_nat_ip}/%{DATA:src_nat_port}->%{IP:dst_nat_ip}/%{DATA:dst_nat_port} None None %{INT:protocol_id} %{DATA:policy_name} %{DATA:src_zone} %{DATA:dst_zone} %{INT:session_id}\D+ %{DATA:interface}"
+                }
+                add_tag => ["RT_FLOW_SESSION"]
+            }
+        }
+    }
+    output {
+        elasticsearch {
+            hosts => ["elasticsearch-logging:9200"]
+        }
+    }
+
+# Extra environment variables to append to this nodeGroup
+# This will be appended to the current 'env:' key. You can use any of the kubernetes env
+# syntax here
+extraEnvs: []
+#  - name: MY_ENVIRONMENT_VAR
+#    value: the_value_goes_here
+
+# Allows you to load environment variables from kubernetes secret or config map
+envFrom: []
+# - secretRef:
+#     name: env-secret
+# - configMapRef:
+#     name: config-map
+
+# Add sensitive data to k8s secrets
+secrets: []
+#  - name: "env"
+#    value:
+#      ELASTICSEARCH_PASSWORD: "LS1CRUdJTiBgUFJJVkFURSB"
+#      api_key: ui2CsdUadTiBasRJRkl9tvNnw
+#  - name: "tls"
+#    value:
+#      ca.crt: |
+#        LS0tLS1CRUdJT0K
+#        LS0tLS1CRUdJT0K
+#        LS0tLS1CRUdJT0K
+#        LS0tLS1CRUdJT0K
+#      cert.crt: "LS0tLS1CRUdJTiBlRJRklDQVRFLS0tLS0K"
+#      cert.key.filepath: "secrets.crt" # The path to file should be relative to the `values.yaml` file.
+
+# A list of secrets and their paths to mount inside the pod
+secretMounts: []
+
+image: "docker.elastic.co/logstash/logstash"
+imageTag: "7.9.3"
+imagePullPolicy: "IfNotPresent"
+imagePullSecrets: []
+
+podAnnotations: {}
+
+# additionals labels
+labels: {}
+
+logstashJavaOpts: "-Xmx1g -Xms1g"
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "1536Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1536Mi"
+
+volumeClaimTemplate:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+
+rbac:
+  create: false
+  serviceAccountAnnotations: {}
+  serviceAccountName: ""
+
+podSecurityPolicy:
+  create: false
+  name: ""
+  spec:
+    privileged: true
+    fsGroup:
+      rule: RunAsAny
+    runAsUser:
+      rule: RunAsAny
+    seLinux:
+      rule: RunAsAny
+    supplementalGroups:
+      rule: RunAsAny
+    volumes:
+      - secret
+      - configMap
+      - persistentVolumeClaim
+
+persistence:
+  enabled: false
+  annotations: {}
+
+extraVolumes:
+  ""
+  # - name: extras
+  #   emptyDir: {}
+
+extraVolumeMounts:
+  ""
+  # - name: extras
+  #   mountPath: /usr/share/extras
+  #   readOnly: true
+
+extraContainers:
+  ""
+  # - name: do-something
+  #   image: busybox
+  #   command: ['do', 'something']
+
+extraInitContainers:
+  ""
+  # - name: do-something
+  #   image: busybox
+  #   command: ['do', 'something']
+
+# This is the PriorityClass settings as defined in
+# https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/#priorityclass
+priorityClassName: ""
+
+# By default this will make sure two pods don't end up on the same node
+# Changing this to a region would allow you to spread pods across regions
+antiAffinityTopologyKey: "kubernetes.io/hostname"
+
+# Hard means that by default pods will only be scheduled if there are enough nodes for them
+# and that they will never end up on the same node. Setting this to soft will do this "best effort"
+antiAffinity: "hard"
+
+# This is the node affinity settings as defined in
+# https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#node-affinity-beta-feature
+nodeAffinity: {}
+
+# The default is to deploy all pods serially. By setting this to parallel all pods are started at
+# the same time when bootstrapping the cluster
+podManagementPolicy: "Parallel"
+
+httpPort: 9600
+
+# Custom ports to add to logstash
+extraPorts:
+  []
+  # - name: beats
+  #   containerPort: 5001
+
+updateStrategy: RollingUpdate
+
+# This is the max unavailable setting for the pod disruption budget
+# The default value of 1 will make sure that kubernetes won't allow more than 1
+# of your pods to be unavailable during maintenance
+maxUnavailable: 1
+
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  # readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# How long to wait for logstash to stop gracefully
+terminationGracePeriod: 120
+
+# Probes
+# Default probes are using `httpGet` which requires that `http.host: 0.0.0.0` is part of
+# `logstash.yml`. If needed probes can be disabled or overrided using the following syntaxes:
+#
+# disable livenessProbe
+# livenessProbe: null
+#
+# replace httpGet default readinessProbe by some exec probe
+# readinessProbe:
+#   httpGet: null
+#   exec:
+#     command:
+#       - curl
+#      - localhost:9600
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 300
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 3
+
+## Use an alternate scheduler.
+## ref: https://kubernetes.io/docs/tasks/administer-cluster/configure-multiple-schedulers/
+##
+schedulerName: ""
+
+nodeSelector: {}
+tolerations: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+lifecycle:
+  {}
+  # preStop:
+  #   exec:
+  #     command: ["/bin/sh", "-c", "echo Hello from the postStart handler > /usr/share/message"]
+  # postStart:
+  #   exec:
+  #     command: ["/bin/sh", "-c", "echo Hello from the postStart handler > /usr/share/message"]
+
+service: {}
+#  annotations: {}
+#  type: ClusterIP
+#  ports:
+#    - name: beats
+#      port: 5044
+#      protocol: TCP
+#      targetPort: 5044
+#    - name: http
+#      port: 8080
+#      protocol: TCP
+#      targetPort: 8080
+
+ingress:
+  enabled: false
+#  annotations: {}
+#  hosts:
+#    - host: logstash.local
+#      paths:
+#        - path: /logs
+#          servicePort: 8080
+#  tls: []
