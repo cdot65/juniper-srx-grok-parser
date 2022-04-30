@@ -28,46 +28,45 @@ logstashPipeline:
     filter {
         grok {
             match => {
-                "message" => "<%{POSINT:syslog_pri}>%{SYSLOGTIMESTAMP:syslog_timestamp} %{SYSLOGHOST:syslog_hostname} %{DATA:syslog_program}(?:\[%{POSINT:syslog_pid}\])?: %{GREEDYDATA:syslog_message}"
+                "message" => "<%{POSINT:FACILITY}>%{INT:PRIORITY} %{DATA:TIMESTAMP} %{DATA:HOSTNAME} %{DATA:PROCESS} %{DATA:PROCESS_ID} %{GREEDYDATA:MESSAGE}"
             }
             add_field => [ "received_at", "%{@timestamp}" ]
             add_field => [ "received_from", "%{host}" ]
         }
         syslog_pri { }
-        date {
-            match => [ "syslog_timestamp", "MMM d HH:mm:ss", "MMM dd HH:mm:ss" ]
-        }
         if !("_grokparsefailure" in [tags]) {
-            grok {
-                match => {
-                    "message" => "<%{POSINT:syslog_pri}>%{SYSLOGTIMESTAMP:syslog_timestamp} %{SYSLOGHOST:syslog_hostname} %{DATA:syslog_program}?: %{DATA:apptrack_status}?: %{IP:SRC_IP}/%{DATA:SRC_PORT}->%{IP:DST_IP}/%{WORD:DST_PORT} %{DATA:APP} UNKNOWN %{IP:SRC_NAT_IP}/%{DATA:SRC_NAT_PORT}->%{IP:DST_NAT_IP}/%{DATA:DST_NAT_PORT} %{DATA:RULE} %{DATA:UNKNOWN} %{NUMBER:PROTO_CODE} %{DATA:RULE_POLICY} %{DATA:SRC_ZONE} %{DATA:DST_ZONE} %{NUMBER:BYTES} %{GREEDYDATA:syslog_message}"
-                }
-                add_tag => ["APPTRACK"]
-                remove_field => [ "@message" ]
-            }
             mutate {
-                replace => [ "@source_host", "%{syslog_hostname}" ]
-                replace => [ "@message", "%{syslog_message}" ]
+                replace => [ "@source_host", "%{HOSTNAME}" ]
+                replace => [ "@message", "%{MESSAGE}" ]
             }
         }
         mutate {
             remove_field => [ "syslog_hostname", "syslog_message", "syslog_timestamp" ]
         }
-        if [@message] =~ /^APPTRACK/ {
+        if [@message] =~ /^APPTRACK_SESSION_CREATE/ {
             grok {
                 match => {
-                    "message" => "%{DATA:apptrack_status} %{IP:SRC_IP}/%{DATA:SRC_PORT}->%{IP:DST_IP}/%{WORD:DST_PORT} %{DATA:APP} %{DATA:APP}UNKNOWN UNKNOWN %{IP:SRC_NAT_IP}/%{DATA:SRC_NAT_PORT}->%{IP:DST_NAT_IP}/%{DATA:DST_NAT_PORT} %{DATA:RULE} None %{NUMBER:PROTO_CODE} %{DATA:RULE_POLICY} %{DATA:SRC_ZONE} %{DATA:DST_ZONE} %{NUMBER:BYTES}"
+                    "@message" => "%{DATA:APPTRACK_STATUS} %{DATA:RECORD_ID} source-address=\"%{IP:SRC_IP}\" source-port=\"%{INT:SRC_PORT}\" destination-address=\"%{IP:DESTINATION_IP}\" destination-port=\"%{INT:DST_PORT}\" service-name=\"%{DATA:SERVICE_NAME}\" application=\"%{DATA:APP_NAME}\" nested-application=\"%{DATA:NESTED_APP}\" nat-source-address=\"%{IP:NAT_SRC_IP}\" nat-source-port=\"%{INT:NAT_SRC_PORT}\" nat-destination-address=\"%{IP:NAT_DST_IP}\" nat-destination-port=\"%{INT:NAT_DST_PORT}\" src-nat-rule-name=\"%{DATA:SRC_NAT_RULE_NAME}\" dst-nat-rule-name=\"%{DATA:SRC_DST_RULE_NAME}\" protocol-id=\"%{INT:PROTOCOL_ID}\" policy-name=\"%{DATA:POLICY_NAME}\" source-zone-name=\"%{DATA:SRC_ZONE_NAME}\" destination-zone-name=\"%{DATA:DST_ZONE_NAME}\" session-id=\"%{POSINT:SESSION_ID}\" username=\"%{DATA:USERNAME}\" roles=\"%{DATA:ROLES}\" encrypted=\"%{DATA:ENCRYPTED}\" destination-interface-name=\"%{DATA:DST_IFACE}\" category=\"%{DATA:CATEGORY}\" sub-category=\"%{DATA:SUB_CATEGORY}\" src-vrf-grp=\"%{DATA:SRC_VRF_GROUP}\" dst-vrf-grp=\"%{DATA:DST_VRF_GROUP}\""
                 }
-                remove_field => [ "@message" ]
+                remove_field => [ "@message", "MESSAGE" ]
                 add_tag => ["APPTRACK"]
             }
         }
-        if [@message] =~ /^RT_FLOW_SESSION/ {
+        if [@message] =~ /^APPTRACK_SESSION_VOL_UPDATE/ {
             grok {
                 match => {
-                    "message" => "%{DATA:event}: session created %{IP:src_ip}/%{DATA:src_port}->%{IP:dst_ip}/%{DATA:dst_port} %{DATA:src_nat_rule} %{IP:src_nat_ip}/%{DATA:src_nat_port}->%{IP:dst_nat_ip}/%{DATA:dst_nat_port} None None %{INT:protocol_id} %{DATA:policy_name} %{DATA:src_zone} %{DATA:dst_zone} %{INT:session_id}\D+ %{DATA:interface}"
+                    "@message" => "%{DATA:APPTRACK_STATUS} %{DATA:RECORD_ID} source-address=\"%{IP:SRC_IP}\" source-port=\"%{INT:SRC_PORT}\" destination-address=\"%{IP:DESTINATION_IP}\" destination-port=\"%{INT:DST_PORT}\" service-name=\"%{DATA:SERVICE_NAME}\" application=\"%{DATA:APP_NAME}\" nested-application=\"%{DATA:NESTED_APP}\" nat-source-address=\"%{IP:NAT_SRC_IP}\" nat-source-port=\"%{INT:NAT_SRC_PORT}\" nat-destination-address=\"%{IP:NAT_DST_IP}\" nat-destination-port=\"%{INT:NAT_DST_PORT}\" src-nat-rule-name=\"%{DATA:SRC_NAT_RULE_NAME}\" dst-nat-rule-name=\"%{DATA:SRC_DST_RULE_NAME}\" protocol-id=\"%{INT:PROTOCOL_ID}\" policy-name=\"%{DATA:POLICY_NAME}\" source-zone-name=\"%{DATA:SRC_ZONE_NAME}\" destination-zone-name=\"%{DATA:DST_ZONE_NAME}\" session-id=\"%{POSINT:SESSION_ID}\" packets-from-client=\"%{POSINT:PACKETS_FROM_CLIENT}\" bytes-from-client=\"%{POSINT:BYTES_FROM_CLIENT}\" packets-from-server=\"%{POSINT:PACKETS_FROM_SERVER}\" bytes-from-server=\"%{POSINT:BYTES_FROM_SERVER}\" elapsed-time=\"%{POSINT:ELAPSED_TIME}\" username=\"%{DATA:USERNAME}\" roles=\"%{DATA:ROLES}\" encrypted=\"%{DATA:ENCRYPTED}\" destination-interface-name=\"%{DATA:DST_IFACE}\" category=\"%{DATA:CATEGORY}\" sub-category=\"%{DATA:SUB_CATEGORY}\" src-vrf-grp=\"%{DATA:SRC_VRF_GROUP}\" dst-vrf-grp=\"%{DATA:DST_VRF_GROUP}\" dscp-value=\"%{DATA:DSCP_VALUE}\" apbr-rule-type=\"%{DATA:APBR_RULE_TYPE}\"]"
                 }
-                add_tag => ["RT_FLOW_SESSION"]
+                remove_field => [ "@message", "MESSAGE" ]
+                add_tag => ["APPTRACK"]
+            }
+        }
+        if [@message] =~ /^SNMPD_TRAP_QUEUED/ {
+            grok {
+                match => {
+                    "message" => "%{DATA:SNMP_REQUEST} %{DATA:RECORD_ID} trap-destination=\"%{IP:TRAP_DST}\" queue-name=\"%{DATA:QUEUE_NAME}\" size=\"%{POSINT:SIZE}\""
+                }
+                add_tag => ["SNMPD_TRAP_QUEUED"]
             }
         }
     }
